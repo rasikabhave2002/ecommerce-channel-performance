@@ -36,19 +36,42 @@ turning last week's numbers into a short written read a client or team can
 act on. This script automates that step end-to-end — query → analysis →
 chart → written summary — rather than stopping at a chart.
 
-## Project structure
+## Project Structure
+
+```text
+ecommerce-channel-performance/
+│
 ├── src/
-│ ├── weekly_channel_performance.sql # the BigQuery query
-│ ├── analyze_channel_performance.py # main script: fetch → analyze → chart → summary
-│ └── generate_demo_data.py # (re)generates the bundled demo dataset + sample output
+│   ├── weekly_channel_performance.sql
+│   │   └── BigQuery SQL query for weekly channel performance
+│   │
+│   ├── analyze_channel_performance.py
+│   │   └── Main script: fetch → analyze → visualize → summarize
+│   │
+│   └── generate_demo_data.py
+│       └── Generates the bundled synthetic demo dataset and sample output
+│
 ├── sample_data/
-│ └── demo_weekly_channel_performance.csv # synthetic input used by --demo mode
+│   └── demo_weekly_channel_performance.csv
+│       └── Synthetic input data used with --demo mode
+│
 ├── sample_output/
-│ ├── weekly_channel_performance.csv
-│ ├── channel_revenue_trend.png
-│ └── summary.md
+│   ├── weekly_channel_performance.csv
+│   │   └── Processed weekly channel performance results
+│   │
+│   ├── channel_revenue_trend.png
+│   │   └── Revenue trend visualization by channel
+│   │
+│   └── summary.md
+│       └── Generated analysis summary
+│
 ├── requirements.txt
+│   └── Python dependencies
+│
 └── README.md
+    └── Project documentation
+```
+
 
 
 ## Running it
@@ -100,6 +123,3 @@ Full written summary: [`sample_output/summary.md`](sample_output/summary.md)
 - Add a funnel view using the dataset's `events` table (session → cart → purchase)
 - Push `summary.md` straight into a Slack webhook or email as a scheduled job
 - Parameterize the channel grouping to match real ad-platform UTM conventions
-
----
-*Part of a small portfolio of web analytics / marketing data projects.*
