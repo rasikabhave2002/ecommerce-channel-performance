@@ -4,7 +4,8 @@ Weekly channel performance analyzer
 ------------------------------------
 Pulls weekly revenue/orders/customers by acquisition channel from
 bigquery-public-data.thelook_ecommerce, computes week-over-week change,
-renders a trend chart, and writes a plain-English summary.
+renders a trend chart, and writes a plain-English summary. Also builds a
+session-level funnel (sessions → cart → purchase) from the events table.
 
 Usage:
     python analyze_channel_performance.py --project YOUR_GCP_PROJECT_ID --weeks 12
@@ -22,6 +23,7 @@ import matplotlib.ticker as mticker
 import pandas as pd
 
 SQL_PATH = Path(__file__).parent / "weekly_channel_performance.sql"
+FUNNEL_SQL_PATH = Path(__file__).parent / "session_funnel.sql"
 
 
 def parse_args():
@@ -47,6 +49,8 @@ def get_weeks_back(args):
         print("Please enter a positive whole number (e.g. 8), or press Enter for the default.")
 
 
+# --- Weekly channel performance: data loading ---
+
 def load_demo_data(weeks_back):
     demo_path = Path(__file__).parent.parent / "sample_data" / "demo_weekly_channel_performance.csv"
     df = pd.read_csv(demo_path, parse_dates=["week_start"])
@@ -64,6 +68,8 @@ def fetch_from_bigquery(project, weeks_back):
     )
     return client.query(query, job_config=job_config).to_dataframe()
 
+
+# --- Weekly channel performance: chart, WoW calc, summary ---
 
 def plot_trend(df, out_path):
     pivot = df.pivot_table(index="week_start", columns="channel", values="revenue", aggfunc="sum")
@@ -171,6 +177,88 @@ def write_summary(wow, out_path):
     out_path.write_text("\n".join(lines) + "\n")
 
 
+# --- Session funnel: data loading, chart, summary ---
+
+def fetch_funnel_from_bigquery(project, weeks_back):
+    from google.cloud import bigquery
+
+    client = bigquery.Client(project=project)
+    query = FUNNEL_SQL_PATH.read_text()
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("weeks_back", "INT64", weeks_back)]
+    )
+    return client.query(query, job_config=job_config).to_dataframe()
+
+
+def load_demo_funnel_data():
+    demo_path = Path(__file__).parent.parent / "sample_data" / "demo_session_funnel.csv"
+    return pd.read_csv(demo_path)
+
+
+def plot_funnel(df, out_path):
+    totals = [df["sessions"].sum(), df["added_to_cart"].sum(), df["purchased"].sum()]
+    labels = ["Sessions", "Added to Cart", "Purchased"]
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    bars = ax.barh(labels, totals, color=["#4C72B0", "#DD8452", "#55A868"])
+    ax.invert_yaxis()  # largest stage on top
+    ax.set_xlabel("Sessions")
+    ax.set_title("Session Funnel: Sessions → Cart → Purchase", fontsize=13, fontweight="bold")
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x:,.0f}"))
+
+    for bar, total in zip(bars, totals):
+        pct = total / totals[0] * 100
+        ax.text(bar.get_width() + totals[0] * 0.01, bar.get_y() + bar.get_height() / 2,
+                 f"{total:,.0f} ({pct:.0f}%)", va="center", fontsize=10)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
+def write_funnel_summary(df, out_path):
+    if df.empty:
+        out_path.write_text("No funnel data available.\n")
+        return
+
+    df = df.copy()
+    df["cart_rate_pct"] = (df["added_to_cart"] / df["sessions"] * 100).round(1)
+    df["purchase_rate_pct"] = (df["purchased"] / df["added_to_cart"].replace(0, pd.NA) * 100).round(1)
+    df["overall_conversion_pct"] = (df["purchased"] / df["sessions"] * 100).round(1)
+
+    total_sessions = df["sessions"].sum()
+    total_cart = df["added_to_cart"].sum()
+    total_purchased = df["purchased"].sum()
+
+    lines = [
+        "# Session Funnel Summary",
+        "",
+        "**Sessions → Cart → Purchase**, by channel. Note: this uses "
+        "`events.traffic_source`, a separate field/taxonomy from "
+        "`users.traffic_source` used in the weekly revenue report — the two "
+        "should not be compared directly.",
+        "",
+        "## Overall",
+        f"- {total_sessions:,} sessions → {total_cart:,} added to cart "
+        f"({total_cart/total_sessions*100:.1f}%) → {total_purchased:,} purchased "
+        f"({total_purchased/total_cart*100:.1f}% of cart-adders, "
+        f"{total_purchased/total_sessions*100:.1f}% of all sessions).",
+        "",
+        "## By channel",
+        "",
+        "| Channel | Sessions | Added to Cart | Cart Rate | Purchased | Purchase Rate (of cart) | Overall Conversion |",
+        "|---|---:|---:|---:|---:|---:|---:|",
+    ]
+    for _, row in df.sort_values("sessions", ascending=False).iterrows():
+        lines.append(
+            f"| {row['channel']} | {row['sessions']:,} | {row['added_to_cart']:,} | "
+            f"{row['cart_rate_pct']:.1f}% | {row['purchased']:,} | "
+            f"{row['purchase_rate_pct']:.1f}% | {row['overall_conversion_pct']:.1f}% |"
+        )
+    out_path.write_text("\n".join(lines) + "\n")
+
+
 def main():
     args = parse_args()
     weeks_back = get_weeks_back(args)
@@ -194,6 +282,17 @@ def main():
     wow = compute_wow_change(df, trim_recent_weeks=args.trim_recent)
     write_summary(wow, output_dir / "summary.md")
     print(f"Saved summary to {output_dir}/summary.md")
+
+    if args.demo:
+        funnel_df = load_demo_funnel_data()
+    else:
+        funnel_df = fetch_funnel_from_bigquery(args.project, weeks_back)
+
+    plot_funnel(funnel_df, output_dir / "session_funnel.png")
+    print(f"Saved funnel chart to {output_dir}/session_funnel.png")
+
+    write_funnel_summary(funnel_df, output_dir / "funnel_summary.md")
+    print(f"Saved funnel summary to {output_dir}/funnel_summary.md")
 
 
 if __name__ == "__main__":

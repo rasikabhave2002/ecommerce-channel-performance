@@ -15,8 +15,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from analyze_channel_performance import plot_trend, compute_wow_change, write_summary
-
+from analyze_channel_performance import plot_trend, compute_wow_change, write_summary, plot_funnel, write_funnel_summary
 np.random.seed(7)  # fixed seed = same "random" output every run
 
 CHANNELS = {
@@ -73,6 +72,28 @@ sample_output_dir.mkdir(exist_ok=True)
 plot_trend(df, sample_output_dir / "channel_revenue_trend.png")
 wow = compute_wow_change(df, trim_recent_weeks=0)  # clean synthetic data, nothing to trim
 write_summary(wow, sample_output_dir / "summary.md")
-df.to_csv(sample_output_dir / "weekly_channel_performance.csv", index=False)
 
-print(f"Also wrote chart, data, and summary to {sample_output_dir}/")
+# --- Session funnel demo data ---
+FUNNEL_CHANNELS = {
+    # channel: (sessions, cart_rate, purchase_rate_of_cart)
+    "Email":    (19492, 0.823, 0.794),
+    "Adwords":  (12869, 0.822, 0.794),
+    "Facebook": (4387,  0.833, 0.791),
+    "YouTube":  (4303,  0.836, 0.781),
+    "Organic":  (2187,  0.827, 0.782),
+}
+
+funnel_rows = []
+for channel, (sessions, cart_rate, purchase_rate) in FUNNEL_CHANNELS.items():
+    added_to_cart = int(sessions * cart_rate)
+    purchased = int(added_to_cart * purchase_rate)
+    funnel_rows.append({"channel": channel, "sessions": sessions, "added_to_cart": added_to_cart, "purchased": purchased})
+
+funnel_df = pd.DataFrame(funnel_rows).sort_values("sessions", ascending=False).reset_index(drop=True)
+funnel_csv_path = sample_data_dir / "demo_session_funnel.csv"
+funnel_df.to_csv(funnel_csv_path, index=False)
+print(f"Wrote {len(funnel_df)} rows to {funnel_csv_path}")
+
+plot_funnel(funnel_df, sample_output_dir / "session_funnel.png")
+write_funnel_summary(funnel_df, sample_output_dir / "funnel_summary.md")
+print(f"Saved funnel chart and summary to {sample_output_dir}/")
